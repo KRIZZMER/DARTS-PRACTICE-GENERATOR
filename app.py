@@ -91,7 +91,7 @@ def load_results():
             supabase.table("player_results")
             .select("*")
             .eq("player_id", st.session_state.user.id)
-            .order("created_at", desc=True)
+            .order("created_at", desc=False)
             .execute()
         )
         results = response.data or []
@@ -133,15 +133,22 @@ if "session" not in st.session_state:
 
 # ---------------- HEADER ----------------
 
-st.title("🎯 THE PRACTICE BOARD")
+header_left, header_right = st.columns([5, 1])
+with header_left:
+    st.title("🎯 THE PRACTICE BOARD")
+with header_right:
+    if st.button("🚪 Log Out"):
+        supabase.auth.sign_out()
+        st.session_state.clear()
+        st.rerun()
 st.caption("SMART DARTS PRACTICE GENERATOR • VERSION 4.0")
 st.divider()
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🎯 Practice",
     "📊 Results",
     "📈 Progress",
-    "🎯 Scorer"
+    "🎯 Scorer", "🎮 Games"
 ])
 
 # =========================================================
@@ -1136,3 +1143,94 @@ st.divider()
 st.caption(
     "THE PRACTICE BOARD • SMART TRAINING • V4.0"
 )
+# =============== GAMES TAB ===============
+with tab5:
+    st.header("🎮 Practice Games")
+    st.subheader("🎯 121 Checkout Challenge")
+    st.caption("Check out in 9 darts or fewer to advance to the next target.")
+
+# 121 Checkout Challenge — independent game state
+def init_121():
+    st.session_state.game_121 = {
+        "target": 121,
+        "remaining": 121,
+        "darts": [],
+        "attempts": 0,
+        "completed": 0,
+        "status": "playing"
+    }
+
+# Initialise the 121 game independently of the Match Scorer
+if "game_121" not in st.session_state:
+    init_121()
+
+def add_121_dart(label, value, is_double):
+    g = st.session_state.game_121
+    if g["status"] != "playing":
+        return
+
+    g["darts"].append({"label": label, "value": value})
+    remaining = g["remaining"] - value
+
+    if remaining == 0 and is_double:
+        g["remaining"] = 0
+        g["completed"] += 1
+        g["status"] = "won"
+    elif remaining < 0 or remaining == 1 or (remaining == 0 and not is_double):
+        visit = g["darts"][-((len(g["darts"]) - 1) % 3 + 1):]
+        g["remaining"] += sum(d["value"] for d in visit[:-1])
+        unused = 3 - len(visit)
+        g["darts"].extend(
+            {"label": "BUST", "value": 0} for _ in range(unused)
+        )
+        if len(g["darts"]) >= 9:
+            g["status"] = "failed"
+    else:
+        g["remaining"] = remaining
+        if len(g["darts"]) >= 9:
+            g["status"] = "failed"
+
+with tab5:
+    st.subheader("🎯 121 Dartboard")
+    g121 = st.session_state.game_121
+
+    st.metric("Current Target", g121["target"])
+    st.metric("Remaining", g121["remaining"])
+    st.write(f"Darts thrown: {len(g121['darts'])} / 9")
+
+    if g121["status"] == "playing":
+        click121 = streamlit_image_coordinates(
+            board_image(), key="dartboard_121"
+        )
+        if click121:
+            sig121 = (click121["x"], click121["y"])
+            if st.session_state.get("last_click_121") != sig121:
+                st.session_state.last_click_121 = sig121
+                label, value, is_double = hit_from_xy(*sig121)
+                add_121_dart(label, value, is_double)
+                st.rerun()
+
+with tab5:
+    g121 = st.session_state.game_121
+
+    if g121["status"] == "won":
+        st.success(f"🎯 Checkout complete! {g121['target']} finished!")
+        if st.button("➡️ Next Level", key="next_121"):
+            next_target = g121["target"] + 1
+            completed = g121["completed"]
+            init_121()
+            st.session_state.game_121["target"] = next_target
+            st.session_state.game_121["remaining"] = next_target
+            st.session_state.game_121["completed"] = completed
+            st.session_state.pop("last_click_121", None)
+            st.rerun()
+
+    elif g121["status"] in ("failed", "bust"):
+        st.warning("❌ Attempt finished. Try the same target again!")
+        if st.button("🔄 Retry Target", key="retry_121"):
+            g121["remaining"] = g121["target"]
+            g121["darts"] = []
+            g121["status"] = "playing"
+            g121["attempts"] += 1
+            st.session_state.pop("last_click_121", None)
+            st.rerun()
